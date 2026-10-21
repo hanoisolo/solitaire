@@ -1,0 +1,31 @@
+STAGE 6 - FINAL ARCHITECTURAL AUDIT REQUEST
+
+All 4 segments of the Klondike Solitaire build (C:\Users\fboy2\VibeProjects\solitaire) are complete and every Verification Gate has passed. You are attached the original blueprint (plans/blueprint.md) and all five delivered files. Audit the delivered changes and test results against the blueprint and issue your final sign-off.
+
+DELIVERED FILES AND CONTENTS (per segment):
+
+Segment 1 - engine.js + test_engine.js (gate: node test_engine.js exits 0)
+- engine.js: pure SolitaireEngine with SUITS, RANKS, getCardColor, createDeck, shuffleDeck (Fisher-Yates, non-mutating), createInitialState (deals 7 tableau columns i+1 cards, top face-up, 24-card face-down stock), cloneStateSnapshot/pushSnapshot (JSON serialization of stock/waste/foundations/tableau/moves/score), undo (pops history, restores in place), drawFromStock (draw 1 to waste; recycle waste back to stock reversed/face-down when stock empty; false when both empty), canMoveToFoundation, canMoveToTableau, moveCards (from waste/tableau/foundation to tableau/foundation; validates BEFORE snapshot so illegal moves never pollute history; auto-flips exposed tableau top +5; scoring: +10 foundation, +5 waste-to-tableau, -15 foundation-to-tableau floored at 0; moves +1), autoMoveToFoundation (waste/tableau top), isGameWon (all 4 foundations = 13). Universal wrapper: module.exports in Node, window.SolitaireEngine in browser.
+- test_engine.js: 18 tests covering 52-card deck uniqueness/validation, deterministic + random shuffle without card loss, 7-column deal (28 tableau + 24 stock + 52 total), alternating-color/descending tableau legality (single, multi-card stacks, King-on-empty, same-color/wrong-rank/face-down rejections), auto-flip +5, stock draw/recycle cycle, foundation suit/rank rules + multi-card rejection, autoMoveToFoundation, undo restoration (exact moves/score/piles, recycle undo), isGameWon, plus Segment 4 lifecycle tests (multi-step sequence with exact undo restore; simulated 52-card foundation completion, 52 moves, score 520, undo flips win off).
+- Gate result: PASSED (all 18 tests, exit 0).
+
+Segment 2 - index.html + styles.css (gate: Node assertion script)
+- index.html: top bar with title, #move-counter, #score-counter, #btn-undo (disabled), #btn-new-game; #game-board with #stock-pile, #waste-pile, spacer, 4 foundation slots (#foundation-spades/hearts/diamonds/clubs with suit watermarks and data-suit), #tableau with #tableau-0..6 (data-col), #win-overlay (.hidden) with #win-stats and #btn-play-again; classic script tags engine.js then app.js.
+- styles.css: radial-gradient casino felt (#0f5132 to #072e1b), gold/ivory HUD, dashed pile slots, .card styling with corner rank/suit labels and central pip, .face-down crimson/gold patterned back, .red/.black colors, .selected/.dragging/.drop-target highlights, --card-index cascade offset, .win-overlay celebration modal.
+- Gate result: PASSED first run ("Segment 2 Gate Passed").
+
+Segment 3 - app.js (gate: node --check app.js + assertion script)
+- initGame, formatRank, getSuitSymbol, createCardElement (draggable only when face-up; click/dblclick/dragstart/dragend with stopPropagation), render (stock top card, waste top card, foundation tops, tableau cascades, selection highlighting), handleStockClick (draw/recycle), handleSourceOrTargetClick (click-to-move: select / deselect / attempt move; empty column and foundation slot clicks while selected), handleCardDoubleClick (autoMoveToFoundation), setupDragAndDrop (dragover/drop on tableau columns and foundation slots).
+- Gate result: PASSED first run ("Segment 3 Gate Passed").
+
+Segment 4 - app.js additions + test_engine.js extension (gate: node test_engine.js && node --check app.js && assertion script)
+- updateHUD (move/score counters, Undo disabled when history empty; called from render), handleNewGame (fresh shuffled state, bound to #btn-new-game and #btn-play-again), handleUndo (bound to #btn-undo and Ctrl+Z/Cmd+Z), checkWinState (shows #win-overlay with final moves/score when isGameWon), hideWinOverlay on undo/new game.
+- test_engine.js: added 2 lifecycle integration tests (exact multi-step undo restore incl. score floor at 0; simulated full 52-card completion).
+- Gate result: PASSED ("All 18 engine tests passed." + "Segment 4 Gate Passed").
+
+DEVIATIONS FROM BLUEPRINT (disclosed):
+1. Segment 1's gate needed two fix attempts before passing (both bugs were in test_engine.js, engine.js untouched: (a) test piles were double-wrapped in arrays, (b) a canMoveToFoundation "wrong suit" expectation contradicted the approved signature canMoveToFoundation(card, foundationPile, suit) - the pile passed must belong to `suit`; corrected to test card-suit vs foundation-suit mismatch). Attempt 2 fixed it, so the Stage-5 2-strike breaker was not triggered. Segments 2, 3, and 4 gates passed on the first run.
+2. Added a plans/ directory in the project holding the blueprint artifacts (stage2-blueprint-request.txt, blueprint.md) - not in the blueprint's file layout; the five game files match the layout exactly.
+3. app.js keeps a module-level draggedSource alongside dataTransfer (defensive against browsers that block getData during dragover) - consistent with the blueprint's drag-and-drop design.
+
+AUDIT REQUEST: Compare the delivered files and results against the blueprint. Confirm every Verification Gate ran and passed, that no out-of-segment scope crept in, and end with your explicit final sign-off: AUDIT PASSED or AUDIT FAILED, with reasons.

@@ -1,0 +1,278 @@
+/* Klondike Solitaire - casino felt theme */
+
+:root {
+  --felt-light: #0f5132;
+  --felt-dark: #072e1b;
+  --gold: #d4af37;
+  --ivory: #f5f0e1;
+  --card-width: 90px;
+  --card-height: 126px;
+  --corner-offset: 22px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Georgia, 'Times New Roman', serif;
+  color: var(--ivory);
+  background: radial-gradient(circle at 50% 20%, var(--felt-light), var(--felt-dark) 80%);
+}
+
+/* ---------- Top bar ---------- */
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 24px;
+  border-bottom: 2px solid rgba(212, 175, 55, 0.5);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.game-title {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: 2px;
+  color: var(--gold);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.stats {
+  display: flex;
+  gap: 24px;
+}
+
+.stat {
+  font-size: 1.05rem;
+  color: var(--ivory);
+}
+
+.actions button {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 8px 18px;
+  margin-left: 8px;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #1d7a4c, #0d4a2c);
+  color: var(--ivory);
+  cursor: pointer;
+}
+
+.actions button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #269a60, #136040);
+}
+
+.actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---------- Board ---------- */
+
+#game-board {
+  max-width: 1000px;
+  margin: 24px auto;
+  padding: 0 16px;
+}
+
+.top-row {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.top-spacer {
+  flex: 1;
+}
+
+.pile-slot {
+  width: var(--card-width);
+  height: var(--card-height);
+  border: 2px dashed rgba(245, 240, 225, 0.45);
+  border-radius: 8px;
+  position: relative;
+}
+
+.foundation-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3rem;
+  color: rgba(245, 240, 225, 0.25);
+  user-select: none;
+}
+
+.foundation-slot.hearts,
+.foundation-slot.diamonds {
+  color: rgba(220, 85, 85, 0.35);
+}
+
+/* ---------- Tableau ---------- */
+
+#tableau {
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.tableau-col {
+  width: var(--card-width);
+  min-height: var(--card-height);
+  border-radius: 8px;
+  position: relative;
+}
+
+.tableau-col::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--card-width);
+  height: var(--card-height);
+  border: 2px dashed rgba(245, 240, 225, 0.3);
+  border-radius: 8px;
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  width: var(--card-width);
+  height: var(--card-height);
+  border-radius: 8px;
+  border: 1px solid #999;
+  position: absolute;
+  top: 0;
+  left: 0;
+  user-select: none;
+  cursor: default;
+  box-shadow: 1px 2px 4px rgba(0, 0, 0, 0.45);
+  background: #fdfdf8;
+  transform: translateY(calc(var(--card-index, 0) * var(--corner-offset)));
+}
+
+.card.face-up {
+  cursor: pointer;
+}
+
+.card.face-up.red {
+  color: #c0392b;
+}
+
+.card.face-up.black {
+  color: #1c1c1c;
+}
+
+.card .corner {
+  position: absolute;
+  font-size: 1.05rem;
+  font-weight: bold;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.card .corner.top-left {
+  top: 5px;
+  left: 6px;
+}
+
+.card .corner.bottom-right {
+  bottom: 5px;
+  right: 6px;
+  transform: rotate(180deg);
+}
+
+.card .pip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 2.6rem;
+}
+
+/* Face-down: patterned crimson/gold back */
+
+.card.face-down {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(212, 175, 55, 0.35) 0 6px,
+      rgba(212, 175, 55, 0) 6px 12px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(245, 240, 225, 0.18) 0 6px,
+      rgba(245, 240, 225, 0) 6px 12px
+    ),
+    linear-gradient(160deg, #8e1f2f, #5b1220);
+  border-color: #3d0d17;
+}
+
+/* Selection and drop-target highlighting */
+
+.card.selected {
+  outline: 3px solid var(--gold);
+  outline-offset: -1px;
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.8);
+}
+
+.card.dragging {
+  opacity: 0.75;
+}
+
+.drop-target {
+  border-color: var(--gold) !important;
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.6);
+}
+
+/* ---------- Win overlay ---------- */
+
+.win-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 100;
+}
+
+.win-overlay.hidden {
+  display: none;
+}
+
+.win-card {
+  text-align: center;
+  padding: 40px 64px;
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+  background: linear-gradient(160deg, #0d4a2c, #072e1b);
+  box-shadow: 0 0 40px rgba(212, 175, 55, 0.5);
+}
+
+.win-card h2 {
+  margin: 0 0 12px;
+  font-size: 2.4rem;
+  color: var(--gold);
+}
+
+.win-card p {
+  font-size: 1.2rem;
+}
+
+.win-card button {
+  font-family: inherit;
+  font-size: 1.1rem;
+  padding: 10px 26px;
+  margin-top: 16px;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #1d7a4c, #0d4a2c);
+  color: var(--ivory);
+  cursor: pointer;
+}

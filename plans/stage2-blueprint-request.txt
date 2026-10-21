@@ -1,0 +1,32 @@
+You are the architect for a new project. Design the architecture and produce the segmented execution plan (Stage 2 of our Start-to-Finish Segmented Execution Workflow).
+
+PROJECT: A playable Klondike Solitaire browser game in C:\Users\fboy2\VibeProjects\solitaire (directory will be created; greenfield). Plain vanilla HTML/CSS/JS, no build tooling, no frameworks. Opened by double-clicking index.html (file:// protocol) - no dev server; use classic script tags (no ES modules).
+
+CONTEXT MAP (Stage 1, complete):
+- Target directory is empty; no existing code to analyze.
+- Environment: Windows, Node v24.21.0 available. NO browser automation - every Verification Gate must be runnable headlessly from the Node CLI (e.g. "node test_engine.js", "node --check app.js", or small Node assertion scripts that read/parse the produced files).
+- Implementer is Mistral (main agent). You blueprint only; Mistral builds one segment at a time and runs each gate.
+
+REQUIRED: break this build into exactly 4 sequential Segments with these prescribed contents (1-3 files per segment max):
+
+Segment 1: Pure game state and rules engine (engine.js) + an automated Node test script (test_engine.js) that verifies 52-card deck creation, shuffle, dealing the 7 tableau columns, legal/illegal alternating-color tableau moves, stock/waste cycling, and suit-ascending foundation moves.
+
+Segment 2: Clean casino-felt UI (index.html and styles.css) with visual cards, suits, colors, and board slots.
+
+Segment 3: Interactive gameplay (app.js) supporting click-to-move and drag-and-drop card stacks, stock drawing, auto-flipping newly exposed tableau cards, and double-click auto-move to foundation.
+
+Segment 4: New Game button, Undo last move, Move/Score counter, and Win celebration state.
+
+CONSTRAINTS (mandatory):
+- Each Segment must define: (a) exact files and functions to create/modify, (b) the concrete goal of the segment, (c) an explicit Verification Gate - the exact Node-runnable command and what must be true for it to pass.
+- Segment 1's gate MUST be: "node test_engine.js" exits 0 with all assertions passing.
+- Keep engine.js pure (no DOM) so it runs under Node directly.
+- Specify the state snapshot format for Undo (segment 4) and make sure segment 1's engine design accommodates it (serializable state; move application suitable for snapshot/restore).
+
+OUTPUT FORMAT (mandatory):
+1. Architecture summary: file layout, module responsibilities, how files connect (script tags, globals, data flow).
+2. Ordered Segments 1-4, each with (a) files+functions, (b) goal, (c) verification gate as an exact command.
+3. Assumptions made.
+4. Risks.
+5. Verification steps for each deliverable.
+6. End with an explicit verdict line: APPROVED (or REJECTED with reasons).

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Klondike Solitaire</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top-bar">
+    <h1 class="game-title">Klondike Solitaire</h1>
+    <div class="stats">
+      <span class="stat">Moves: <span id="move-counter">0</span></span>
+      <span class="stat">Score: <span id="score-counter">0</span></span>
+    </div>
+    <div class="actions">
+      <button id="btn-undo" type="button" disabled>Undo</button>
+      <button id="btn-new-game" type="button">New Game</button>
+    </div>
+  </header>
+
+  <main id="game-board">
+    <div class="top-row">
+      <div id="stock-pile" class="pile-slot" title="Stock"></div>
+      <div id="waste-pile" class="pile-slot" title="Waste"></div>
+      <div class="top-spacer"></div>
+      <div id="foundation-spades" class="pile-slot foundation-slot" data-suit="spades" title="Spades">&spades;</div>
+      <div id="foundation-hearts" class="pile-slot foundation-slot" data-suit="hearts" title="Hearts">&hearts;</div>
+      <div id="foundation-diamonds" class="pile-slot foundation-slot" data-suit="diamonds" title="Diamonds">&diams;</div>
+      <div id="foundation-clubs" class="pile-slot foundation-slot" data-suit="clubs" title="Clubs">&clubs;</div>
+    </div>
+
+    <section id="tableau">
+      <div id="tableau-0" class="tableau-col" data-col="0"></div>
+      <div id="tableau-1" class="tableau-col" data-col="1"></div>
+      <div id="tableau-2" class="tableau-col" data-col="2"></div>
+      <div id="tableau-3" class="tableau-col" data-col="3"></div>
+      <div id="tableau-4" class="tableau-col" data-col="4"></div>
+      <div id="tableau-5" class="tableau-col" data-col="5"></div>
+      <div id="tableau-6" class="tableau-col" data-col="6"></div>
+    </section>
+  </main>
+
+  <div id="win-overlay" class="win-overlay hidden">
+    <div class="win-card">
+      <h2>You Win!</h2>
+      <p id="win-stats"></p>
+      <button id="btn-play-again" type="button">Play Again</button>
+    </div>
+  </div>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
