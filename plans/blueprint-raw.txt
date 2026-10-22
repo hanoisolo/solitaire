@@ -1,0 +1,207 @@
+# Klondike Solitaire Feature Upgrade Blueprint
+
+## 1. Architectural Overview & Exact Engine API Specifications
+
+To preserve the strict separation of concerns in `C:\Users\fboy2\VibeProjects\solitaire`, `engine.js` remains a 100% pure, DOM-free CommonJS/browser UMD module testable under Node.js, while `app.js` manages DOM rendering, animations, timers, and `localStorage` persistence.
+
+### 1.1 State Shape & Snapshot Extensions (`engine.js`)
+- `state.drawMode`: `1 | 3` (defaults to `1` in `createInitialState(shouldShuffle, rngFn, drawMode)` when `drawMode` is omitted, ensuring 100% backward compatibility with all 18 existing tests).
+- `serializeForSnapshot(state)` and `undo(state)` include `drawMode: state.drawMode || 1` so undoing across any move preserves the active draw mode as well as `stock`, `waste`, `foundations`, `tableau`, `moves`, and `score`.
+
+### 1.2 New & Updated `SolitaireEngine` API Signatures
+
+1. **`createInitialState(shouldShuffle, rngFn, drawMode)`**
+   - **Args**: `shouldShuffle?: boolean`, `rngFn?: () => number`, `drawMode?: 1 | 3` (default `1`).
+   - **Returns**: `State` object `{ stock, waste, foundations, tableau, moves: 0, score: 0, history: [], drawMode: drawMode === 3 ? 3 : 1 }`.
+
+2. **`setDrawMode(state, mode)`**
+   - **Args**: `state: State`, `mode: 1 | 3`.
+   - **Behavior**: Sets `state.drawMode = mode === 3 ? 3 : 1`.
+   - **Returns**: `1 | 3` (the applied `drawMode`).
+
+3. **`drawFromStock(state, countOverride)`**
+   - **Args**: `state: State`, `countOverride?: 1 | 3`.
+   - **Behavior**:
+     - Determines `const count = countOverride !== undefined ? countOverride : (state.drawMode || 1);`.
+     - **Draw (`state.stock.length > 0`)**: Calls `pushSnapshot(state)`. Pops `Math.min(count, state.stock.length)` cards one by one from `state.stock`, sets `card.faceUp = true`, and pushes each to `state.waste`. Increments `state.moves += 1`. Returns `true`.
+     - **Recycle (`state.stock.length === 0 && state.waste.length > 0`)**: Calls `pushSnapshot(state)`. Pops all cards from `state.waste` one by one (`card.faceUp = false`) and pushes them back onto `state.stock` (inverting waste back into stock so the earliest-drawn waste cards return to the top of stock, matching both standard Draw-1 and standard Draw-3 Klondike order semantics). Increments `state.moves += 1`. Returns `true`.
+     - **Empty (`state.stock.length === 0 && state.waste.length === 0`)**: Returns `false` without mutating state or history.
+
+4. **`findHint(state)`**
+   - **Args**: `state: State`.
+   - **Returns**: `HintDescriptor | null`:
+     ```js
+     {
+       type: 'foundation' | 'tableau-flip' | 'tableau' | 'stock',
+       from: { zone: 'waste' }
+           | { zone: 'tableau', col: number, cardIndex: number }
+           | { zone: 'stock' },
+       to:   { zone: 'foundation', suit: string }
+           | { zone: 'tableau', col: number }
+           | { zone: 'waste' }
+           | { zone: 'stock' },
+       card: Card | null
+     }
+     ```
+   - **Priority Order**:
+     - **(a) `'foundation'`**: Checks `waste` top card first, then `tableau[0..6]` top cards using `canMoveToFoundation`.
+     - **(b) `'tableau-flip'`**: For each column `fromCol` (`0..6`), finds the first face-up card index `idx`. If `idx > 0` (meaning `tableau[fromCol][idx - 1]` is face-down and moving this stack will flip it), checks `canMoveToTableau(tableau[fromCol].slice(idx), tableau[toCol])` for `toCol = 0..6` (`toCol !== fromCol`).
+     - **(c) `'tableau'`**:
+       1. Checks `waste` top card onto `tableau[0..6]`.
+       2. Checks full face-up stack moves (`idx === 0`) from `fromCol` onto `toCol` **excluding** pointless King moves from `idx === 0` onto an empty `tableau[toCol]`.
+       3. Checks sub-stack splits (`cardIndex > idx`) only when doing so exposes `tableau[fromCol][cardIndex - 1]` for an immediate legal foundation move.
+     - **(d) `'stock'`**: If `state.stock.length > 0`, returns `{ type: 'stock', from: { zone: 'stock' }, to: { zone: 'waste' }, card: state.stock[state.stock.length - 1] }`. If `state.stock.length === 0 && state.waste.length > 0`, returns `{ type: 'stock', from: { zone: 'stock' }, to: { zone: 'stock' }, card: null }`.
+     - Returns `null` if `isGameWon(state)` or no legal moves exist.
+
+5. **`canAutoComplete(state)`**
+   - **Args**: `state: State`.
+   - **Returns**: `boolean` — `true` iff `!isGameWon(state)`, `state.stock.length === 0`, `state.waste.length === 0`, and every card across `state.tableau[0..6]` has `card.faceUp === true`.
+
+6. **`autoCompleteStep(state)`**
+   - **Args**: `state: State`.
+   - **Behavior**: Inspects the top card of `state.waste` (if any) and the top card of each non-empty `state.tableau[col]`. Selects the lowest-rank card that satisfies `canMoveToFoundation(card, state.foundations[card.suit], card.suit)`, executes `moveCards(state, from, to)`, and returns `{ from, to, card }`. Returns `null` if no foundation move is available.
+
+7. **`getAutoCompleteMoves(state)`**
+   - **Args**: `state: State`.
+   - **Behavior**: Clones `state` via `cloneStateSnapshot(state)` (with `history: []`) and repeatedly invokes `autoCompleteStep(simState)` (up to 52 steps) without mutating the live `state`.
+   - **Returns**: `Array<{ from, to, card }>` representing the full sequence of moves to complete the game.
+
+8. **`createNearWinState(drawMode)`**
+   - **Args**: `drawMode?: 1 | 3`.
+   - **Returns**: Deterministic 52-card `State` where `stock = []`, `waste = []`, `foundations` hold ranks `1..11` (`A..J`) of all 4 suits (44 cards, `score: 440`, `moves: 0`, `history: []`), and `tableau[0..3]` hold the face-up Kings and Queens (`13` and `12`) in valid alternating-color stacks (`tableau[4..6] = []`). `canAutoComplete(state)` is immediately `true` and 8 `autoCompleteStep` calls finish the game.
+
+9. **Stats & Timer Helpers (`createDefaultStats`, `recordGameResult`, `formatTime`)**
+   - **`createDefaultStats()`**: Returns:
+     ```js
+     {
+       gamesPlayed: 0,
+       gamesWon: 0,
+       winPercentage: 0,
+       currentStreak: 0,
+       bestStreak: 0,
+       bestTime: null
+     }
+     ```
+   - **`recordGameResult(stats, won, elapsedSeconds)`**: Pure function returning an updated stats object with incremented `gamesPlayed`, updated `gamesWon`, `winPercentage = Math.round((gamesWon / gamesPlayed) * 100)`, updated `currentStreak` / `bestStreak`, and `bestTime` updated to `Math.min` of prior `bestTime` and `elapsedSeconds` on wins.
+   - **`formatTime(totalSeconds)`**: Pure function formatting non-negative seconds as `'mm:ss'` (e.g., `0 -> '00:00'`, `125 -> '02:05'`).
+
+---
+
+## 2. Ordered Segment Implementation Plan
+
+### Segment 1: Engine Upgrade & Unit Test Suite Expansion
+- **Files to Modify (2 files)**:
+  1. `engine.js`
+  2. `test_engine.js`
+- **Functions to Create/Modify**:
+  - In `engine.js`:
+    - Update `createInitialState(shouldShuffle, rngFn, drawMode)`, `serializeForSnapshot(state)`, `undo(state)`, and `drawFromStock(state, countOverride)`.
+    - Create and export `setDrawMode`, `findHint`, `canAutoComplete`, `autoCompleteStep`, `getAutoCompleteMoves`, `createNearWinState`, `createDefaultStats`, `recordGameResult`, and `formatTime`.
+  - In `test_engine.js`:
+    - Keep all 18 existing tests untouched.
+    - Append >= 10 new tests covering: Draw-3 drawing (3 cards, partial <3 remainder), Draw-3 recycle order preservation, undo after Draw-3 draw and recycle, `findHint` priority `(a) foundation > (b) tableau-flip > (c) tableau > (d) stock` and `null` when stuck/King-on-empty anti-loop, `canAutoComplete` gating (false when face-down cards or stock remain, true when all face-up), `autoCompleteStep` + `getAutoCompleteMoves` + `createNearWinState` full win completion, and `recordGameResult` / `formatTime` stats math.
+- **Concrete Goal**: Implement all pure engine logic for Draw-1/Draw-3, hint prioritization, auto-complete detection/execution, deterministic near-win deal creation, and statistics math with comprehensive unit test coverage.
+- **Verification Gate**:
+  - Run `node test_engine.js` — must exit `0` with all 18 original tests + all new assertions (>= 28 tests total) passing.
+
+---
+
+### Segment 2: UI Markup, Styling, and Minimal Element Bindings
+- **Files to Modify (3 files)**:
+  1. `index.html`
+  2. `styles.css`
+  3. `app.js`
+- **Elements & Functions to Create/Modify**:
+  - In `index.html`:
+    - In `.stats`: add `<span class="stat">Time: <span id="timer-display">00:00</span></span>`.
+    - In `.actions`: add draw-mode toggle button `<button id="btn-draw-mode" type="button" title="Toggle Draw 1 / Draw 3">Draw: 1</button>`, `<button id="btn-hint" type="button">Hint</button>`, `<button id="btn-auto-complete" type="button" class="hidden">Auto-Complete</button>`, `<button id="btn-near-win" type="button" title="Load deterministic near-win deal">Near-Win Deal</button>`, and `<button id="btn-stats" type="button">Stats</button>`.
+    - Add `#stats-modal` overlay (`.modal-overlay.hidden`) containing `#stat-games-played`, `#stat-games-won`, `#stat-win-pct`, `#stat-current-streak`, `#stat-best-streak`, `#stat-best-time`, `#btn-reset-stats`, and `#btn-close-stats`.
+  - In `styles.css`:
+    - Add Draw-3 waste horizontal fan styles (`.waste-slot .card` using `--waste-fan-index` offset `calc(var(--waste-fan-index, 0) * 18px)`).
+    - Add `.hint-source` and `.hint-target` pulsing gold/cyan outline animations for hint highlighting.
+    - Add `#btn-auto-complete` accent styling, `.modal-overlay` / `.modal-card` / `.stats-grid` styles for the Statistics panel, and responsive top-bar wrapping.
+  - In `app.js`:
+    - Register the new DOM references in `els` (`timerDisplay`, `btnDrawMode`, `btnHint`, `btnAutoComplete`, `btnNearWin`, `btnStats`, `statsModal`, `btnCloseStats`, `btnResetStats`, and stat value spans) so all DOM IDs are bound cleanly.
+- **Concrete Goal**: Add all HTML controls/modals, CSS rules for waste Draw-3 fanning, hint highlights, and statistics modal, and bind element references in `app.js`.
+- **Verification Gate**:
+  - Run `node -c app.js` and `node -c engine.js` (syntax check exits `0`), verify all DOM IDs in `index.html` match `els` in `app.js`, and run `node test_engine.js` (exits `0`).
+
+---
+
+### Segment 3: Full Controller Wiring, Persistence, Timer, Animations & End-to-End Smoke Verification
+- **Files to Modify (2 files)**:
+  1. `app.js`
+  2. `test_engine.js` (or inline `node -e` smoke verification alongside `test_engine.js`)
+- **Functions to Create/Modify in `app.js`**:
+  - **Draw-3 Waste Rendering & Preference Persistence**:
+    - Load/save draw mode in `localStorage` (`'solitaire_draw_mode'`).
+    - Update `render()` for `#waste-pile`: render up to the top 3 cards (`gameState.waste.slice(-3)`), setting `--waste-fan-index` (`0..2`). Only the topmost waste card (`i === visibleWaste.length - 1`) receives click, double-click, and drag listeners.
+    - Clicking `#btn-draw-mode` toggles between Draw 1 and Draw 3, persists preference, and starts a new deal with that draw mode (or updates `gameState.drawMode` and button label `Draw: 1` / `Draw: 3`).
+  - **Game Timer (`mm:ss`)**:
+    - `startTimerIfNeeded()`, `stopTimer()`, `resetTimer()`. Starts interval on the first move that increments `gameState.moves` from `0` to `> 0`; stops when `isGameWon(gameState)` becomes `true`; formats via `SolitaireEngine.formatTime(elapsedSeconds)` into `#timer-display`.
+  - **Hint Highlighting (`handleHint`)**:
+    - Calls `SolitaireEngine.findHint(gameState)`. Applies `.hint-source` and `.hint-target` classes to the corresponding DOM card/slot (and clears them automatically after 1.5s or on the next user interaction).
+  - **Auto-Complete Button & Animation Loop (`handleAutoComplete`)**:
+    - In `updateHUD()`, toggles `#btn-auto-complete` visibility based on `SolitaireEngine.canAutoComplete(gameState) && !isAutoCompleting`.
+    - When clicked, runs a timed step loop (`setInterval` / `setTimeout` at ~90ms per card) calling `SolitaireEngine.autoCompleteStep(gameState)` and `render()` one card at a time until `SolitaireEngine.isGameWon(gameState)` is reached, triggering the win state.
+  - **Near-Win Deal Loader (`handleNearWinDeal`)**:
+    - Resets timer/flags and loads `SolitaireEngine.createNearWinState(currentDrawMode)` so Auto-Complete and win flows can be tested in one click.
+  - **Statistics Persistence & Modal (`loadStats`, `saveStats`, `recordCurrentGameIfNeeded`, `renderStatsModal`)**:
+    - Persists stats JSON in `localStorage` under `'solitaire_stats'`.
+    - Records a game as played once the first move occurs (or records loss on abandoning an in-progress game / records win exactly once when `isGameWon(gameState)` triggers, updating `gamesPlayed`, `gamesWon`, `winPercentage`, `currentStreak`, `bestStreak`, `bestTime`).
+    - Updates `#win-stats` to include elapsed time alongside moves and score.
+- **Concrete Goal**: Complete end-to-end interactive wiring of Draw 1/3, Hint, Auto-Complete animation, Timer, Near-Win Deal, and `localStorage` Statistics.
+- **Verification Gate**:
+  - Run `node -c app.js` (exits `0`).
+  - Run `node test_engine.js` (exits `0`).
+  - Run a Node end-to-end smoke check simulating `createNearWinState(3)` -> `canAutoComplete` -> step-by-step `autoCompleteStep` loop -> `isGameWon` === `true` -> `recordGameResult` stats verification (exits `0`).
+
+---
+
+## 3. Key Edge Cases Respected per Segment
+
+1. **Draw-3 Recycle & Partial Stock Remainder (Segment 1 & 3)**:
+   - When `state.stock` has 1 or 2 cards left in Draw-3 mode, `drawFromStock` draws `Math.min(3, state.stock.length)` cards without recycling on the same click.
+   - When `state.stock` is empty and `state.waste` is recycled, popping from `waste` and pushing to `stock` reverses the waste pile so the first-drawn waste card returns to the top of `stock`, preserving standard Klondike Draw-3 order.
+2. **Undo of Draw-3 & Score Reversal (Segment 1 & 3)**:
+   - `pushSnapshot` captures the full `stock`, `waste`, `score`, `moves`, and `drawMode` before any 3-card draw or recycle. Undoing restores the exact prior waste array, and `app.js` re-renders `gameState.waste.slice(-3)` with `--waste-fan-index: 0..2`, preventing any fan corruption.
+   - Only the very top card of the fanned waste (`gameState.waste[gameState.waste.length - 1]`) is draggable/clickable.
+3. **Hint Edge Cases & Infinite-Loop Prevention (Segment 1 & 3)**:
+   - `findHint` never recommends moving a King that is already at `cardIndex === 0` of a tableau column onto another empty tableau column.
+   - `findHint` returns `null` cleanly when `stock` and `waste` are empty and no legal foundation or productive tableau moves exist (UI briefly shakes or disables hint without throwing).
+4. **Auto-Complete Gating & Interruption Safety (Segment 1 & 3)**:
+   - `canAutoComplete(state)` strictly requires `!isGameWon(state)`, `state.stock.length === 0`, `state.waste.length === 0`, and every card in `state.tableau[0..6]` to have `faceUp === true`.
+   - `autoCompleteStep(state)` picks the lowest-rank eligible card across columns so foundations build evenly without blocking.
+   - Starting a New Game or clicking Undo during the Auto-Complete animation cancels the active animation timer cleanly.
+5. **Double-Counting Prevention in Statistics & Timer (Segment 3)**:
+   - A per-game boolean `gameResultRecorded` prevents a won game from recording multiple wins if `render()` runs again after winning, and starting a New Game after making >= 1 move in an unfinished game records the abandoned game as a loss before resetting.
+
+---
+
+## 4. Risks to Existing Tests & Mitigation
+
+| Risk | Affected Tests | Mitigation Strategy |
+| :--- | :--- | :--- |
+| Changing `createInitialState` default draw behavior could make `drawFromStock` draw 3 cards instead of 1 | Test 6 (`drawFromStock draws to waste and recycles when stock is empty`) & Test 8 | Default `state.drawMode = 1` when `drawMode` argument is omitted in `createInitialState(shouldShuffle, rngFn, drawMode)`. |
+| Modifying existing exports or signatures on `SolitaireEngine` | All 18 tests in `test_engine.js` | Keep all 15 existing export names and parameter orders intact; only add optional trailing parameters (`drawMode`, `countOverride`) and new exported functions. |
+| Mutating `state` inside `findHint` or `getAutoCompleteMoves` | Any subsequent move/undo assertions | `findHint` only reads `state`; `getAutoCompleteMoves` operates strictly on `cloneStateSnapshot(state)`. |
+
+---
+
+## 5. Assumptions Made
+
+1. Standard Klondike Draw-3 rules apply: unlimited passes through the stock are permitted without a recycle score penalty (preserving existing scoring rules tested in `test_engine.js`).
+2. A game counts toward `gamesPlayed` once at least one move has been made (`gameState.moves > 0`), preventing accidental double-clicks on "New Game" at move 0 from inflating losses.
+3. The "Load Near-Win Test Deal" button is exposed directly in the top action bar (`#btn-near-win`) for immediate manual and automated verification of Auto-Complete, timer stop, and win statistics.
+
+---
+
+## 6. Segmentation Summary Table
+
+| Segment | Files Touched (Max 3) | Concrete Goal | Verification Gate |
+| :--- | :--- | :--- | :--- |
+| **Segment 1** | `engine.js`, `test_engine.js` | Add Draw-1/Draw-3 mode support, `findHint`, `canAutoComplete`, `autoCompleteStep`, `getAutoCompleteMoves`, `createNearWinState`, and pure stats/time helpers; append >= 10 new unit tests. | `node test_engine.js` exits `0` with all 18 original + >= 10 new tests passing. |
+| **Segment 2** | `index.html`, `styles.css`, `app.js` | Add HUD timer, Draw Mode toggle, Hint, Auto-Complete, Near-Win Deal, and Stats buttons + Stats Modal in HTML/CSS; bind DOM elements in `app.js`. | `node -c app.js` and `node test_engine.js` exit `0`; all new DOM IDs match `app.js` bindings. |
+| **Segment 3** | `app.js`, `test_engine.js` | Wire Draw-3 waste fanning, `localStorage` preferences/stats, `mm:ss` timer lifecycle, hint DOM highlights, Auto-Complete animation loop, and Near-Win deal loader. | `node -c app.js`, `node test_engine.js`, and Node end-to-end near-win auto-complete + stats smoke check all exit `0`. |
+
+BLUEPRINT READY

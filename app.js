@@ -10,6 +10,16 @@
   let gameState = null;
   let selectedSource = null; // { zone:'waste' } | { zone:'foundation', suit } | { zone:'tableau', col, cardIndex }
   let draggedSource = null;
+  let timerInterval = null;
+  let elapsedSeconds = 0;
+  let isAutoCompleting = false;
+  let autoCompleteTimer = null;
+  let hintTimeout = null;
+  let stats = null;
+  let gameResultRecorded = true; // no game in progress yet
+
+  const DRAW_MODE_KEY = 'solitaire_draw_mode';
+  const STATS_KEY = 'solitaire_stats';
 
   const els = {
     stock: document.getElementById('stock-pile'),
@@ -18,8 +28,23 @@
     foundations: {},
     moveCounter: document.getElementById('move-counter'),
     scoreCounter: document.getElementById('score-counter'),
+    timerDisplay: document.getElementById('timer-display'),
     btnUndo: document.getElementById('btn-undo'),
     btnNewGame: document.getElementById('btn-new-game'),
+    btnDrawMode: document.getElementById('btn-draw-mode'),
+    btnHint: document.getElementById('btn-hint'),
+    btnAutoComplete: document.getElementById('btn-auto-complete'),
+    btnNearWin: document.getElementById('btn-near-win'),
+    btnStats: document.getElementById('btn-stats'),
+    statsModal: document.getElementById('stats-modal'),
+    statGamesPlayed: document.getElementById('stat-games-played'),
+    statGamesWon: document.getElementById('stat-games-won'),
+    statWinPct: document.getElementById('stat-win-pct'),
+    statCurrentStreak: document.getElementById('stat-current-streak'),
+    statBestStreak: document.getElementById('stat-best-streak'),
+    statBestTime: document.getElementById('stat-best-time'),
+    btnResetStats: document.getElementById('btn-reset-stats'),
+    btnCloseStats: document.getElementById('btn-close-stats'),
     winOverlay: document.getElementById('win-overlay'),
     winStats: document.getElementById('win-stats'),
     btnPlayAgain: document.getElementById('btn-play-again')
@@ -27,6 +52,218 @@
   Array.prototype.forEach.call(document.querySelectorAll('.foundation-slot'), function (el) {
     els.foundations[el.getAttribute('data-suit')] = el;
   });
+
+  /* ---------- localStorage preferences & statistics ---------- */
+
+  function loadDrawModePref() {
+    try {
+      return window.localStorage.getItem(DRAW_MODE_KEY) === '3' ? 3 : 1;
+    } catch (err) {
+      return 1;
+    }
+  }
+
+  function saveDrawModePref(mode) {
+    try {
+      window.localStorage.setItem(DRAW_MODE_KEY, String(mode));
+    } catch (err) {
+      /* storage unavailable: preference simply not persisted */
+    }
+  }
+
+  function loadStats() {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(window.localStorage.getItem(STATS_KEY) || 'null');
+    } catch (err) {
+      parsed = null;
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      return SolitaireEngine.createDefaultStats();
+    }
+    // Merge so older records never break on missing fields
+    const merged = SolitaireEngine.createDefaultStats();    const keys = ['gamesPlayed', 'gamesWon', 'winPercentage', 'currentStreak', 'bestStreak'];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (typeof parsed[k] === 'number' && isFinite(parsed[k])) {
+        merged[k] = parsed[k];
+      }
+    }
+    if (typeof parsed.bestTime === 'number' && isFinite(parsed.bestTime)) {
+      merged.bestTime = parsed.bestTime;
+    }
+    return merged;
+  }
+
+  function saveStats() {
+    try {
+      window.localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+    } catch (err) {
+      /* storage unavailable: stats stay in memory for this session */
+    }
+  }
+
+  function recordCurrentGameIfNeeded(won) {
+    if (gameResultRecorded) {
+      return;
+    }
+    if (gameState.moves === 0 && !won) {
+      return; // nothing happened: not a played game
+    }
+    if (!won && SolitaireEngine.isGameWon(gameState)) {
+      return; // never record a won game as a loss
+    }
+    stats = SolitaireEngine.recordGameResult(stats, won, elapsedSeconds);
+    saveStats();
+    gameResultRecorded = true;
+  }
+
+  /* ---------- Game timer ---------- */
+
+  function startTimerIfNeeded() {
+    if (timerInterval !== null || SolitaireEngine.isGameWon(gameState)) {
+      return;
+    }
+    timerInterval = window.setInterval(function () {
+      elapsedSeconds += 1;
+      els.timerDisplay.textContent = SolitaireEngine.formatTime(elapsedSeconds);
+    }, 1000);
+  }
+
+  function stopTimer() {
+    if (timerInterval !== null) {
+      window.clearInterval(timerInterval);
+      timerInterval = null;
+    }
+  }
+
+  function resetTimer() {
+    stopTimer();
+    elapsedSeconds = 0;
+    els.timerDisplay.textContent = '00:00';
+  }
+
+  /* ---------- Hint highlighting ---------- */
+
+  function clearHintHighlight() {
+    if (hintTimeout !== null) {
+      window.clearTimeout(hintTimeout);
+      hintTimeout = null;
+    }
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.hint-source, .hint-target'),
+      function (el) {
+        el.classList.remove('hint-source', 'hint-target');
+      }
+    );
+  }
+
+  function topCardElement(pileEl) {
+    return pileEl.lastElementChild && pileEl.lastElementChild.classList.contains('card')
+      ? pileEl.lastElementChild
+      : pileEl;
+  }
+
+  function hintElementFor(zoneInfo, isTarget) {
+    if (!zoneInfo) {
+      return null;
+    }
+    if (zoneInfo.zone === 'waste') {
+      return isTarget ? els.waste : topCardElement(els.waste);
+    }
+    if (zoneInfo.zone === 'stock') {
+      return els.stock;
+    }
+    if (zoneInfo.zone === 'foundation') {
+      return isTarget ? els.foundations[zoneInfo.suit] : topCardElement(els.foundations[zoneInfo.suit]);
+    }
+    if (zoneInfo.zone === 'tableau') {
+      const colEl = els.tableau[zoneInfo.col];
+      if (isTarget) {
+        return topCardElement(colEl);
+      }
+      const cardEl = colEl.children[zoneInfo.cardIndex];
+      return cardEl || colEl;
+    }
+    return null;
+  }
+
+  function handleHint() {
+    clearHintHighlight();
+    const hint = SolitaireEngine.findHint(gameState);
+    if (!hint) {
+      return; // nothing legal to suggest
+    }
+    const sourceEl = hintElementFor(hint.from, false);
+    const targetEl = hintElementFor(hint.to, true);
+    if (sourceEl) {
+      sourceEl.classList.add('hint-source');
+    }
+    if (targetEl && targetEl !== sourceEl) {
+      targetEl.classList.add('hint-target');
+    }
+    hintTimeout = window.setTimeout(clearHintHighlight, 1500);
+  }
+
+  /* ---------- Auto-complete animation ---------- */
+
+  function stopAutoComplete() {
+    if (autoCompleteTimer !== null) {
+      window.clearTimeout(autoCompleteTimer);
+      autoCompleteTimer = null;
+    }
+    isAutoCompleting = false;
+    els.btnAutoComplete.disabled = false;
+  }
+
+  function stepAutoComplete() {
+    autoCompleteTimer = window.setTimeout(function () {
+      const step = SolitaireEngine.autoCompleteStep(gameState);
+      render();
+      if (step && !SolitaireEngine.isGameWon(gameState)) {
+        stepAutoComplete();
+      } else {
+        stopAutoComplete();
+      }
+    }, 120);
+  }
+
+  function handleAutoComplete() {
+    if (isAutoCompleting || !SolitaireEngine.canAutoComplete(gameState)) {
+      return;
+    }
+    clearHintHighlight();
+    isAutoCompleting = true;
+    els.btnAutoComplete.disabled = true;
+    stepAutoComplete();
+  }
+
+  /* ---------- Statistics modal ---------- */
+
+  function renderStatsModal() {
+    els.statGamesPlayed.textContent = String(stats.gamesPlayed);
+    els.statGamesWon.textContent = String(stats.gamesWon);
+    els.statWinPct.textContent = stats.winPercentage + '%';
+    els.statCurrentStreak.textContent = String(stats.currentStreak);
+    els.statBestStreak.textContent = String(stats.bestStreak);
+    els.statBestTime.textContent =
+      stats.bestTime === null ? '--:--' : SolitaireEngine.formatTime(stats.bestTime);
+  }
+
+  function openStatsModal() {
+    renderStatsModal();
+    els.statsModal.classList.remove('hidden');
+  }
+
+  function closeStatsModal() {
+    els.statsModal.classList.add('hidden');
+  }
+
+  function handleResetStats() {
+    stats = SolitaireEngine.createDefaultStats();
+    saveStats();
+    renderStatsModal();
+  }
 
   function formatRank(rank) {
     if (rank === 1) return 'A';
@@ -47,7 +284,7 @@
     return true;
   }
 
-  function createCardElement(card, sourceInfo) {
+  function createCardElement(card, sourceInfo, interactive) {
     const el = document.createElement('div');
     el.className = 'card ' + (card.faceUp ? 'face-up ' + card.color : 'face-down');
     if (card.faceUp) {
@@ -62,8 +299,8 @@
       String(sourceInfo.zone === 'tableau' ? sourceInfo.cardIndex : 0)
     );
 
-    if (!card.faceUp || sourceInfo.zone === 'stock') {
-      return el; // face-down cards are never interactive
+    if (!card.faceUp || sourceInfo.zone === 'stock' || interactive === false) {
+      return el; // face-down cards and fanned waste cards are never interactive
     }
 
     el.draggable = true;
@@ -120,6 +357,8 @@
   }
 
   function render() {
+    clearHintHighlight();
+
     // Stock: show the top face-down card (or nothing when empty)
     clearChildren(els.stock);
     if (gameState.stock.length > 0) {
@@ -129,13 +368,21 @@
       );
     }
 
-    // Waste: show only the top card
+    // Waste: draw-3 fans the top three cards; only the top card is interactive
     clearChildren(els.waste);
     if (gameState.waste.length > 0) {
-      const top = gameState.waste[gameState.waste.length - 1];
-      const el = createCardElement(top, { zone: 'waste' });
-      if (isSelected({ zone: 'waste' })) el.classList.add('selected');
-      els.waste.appendChild(el);
+      const fanCount = gameState.drawMode === 3 ? 3 : 1;
+      const visibleStart = Math.max(0, gameState.waste.length - fanCount);
+      for (let i = visibleStart; i < gameState.waste.length; i++) {
+        const wasteCard = gameState.waste[i];
+        const isTop = i === gameState.waste.length - 1;
+        const el = createCardElement(wasteCard, { zone: 'waste' }, isTop);
+        el.style.setProperty('--waste-fan-index', String(i - visibleStart));
+        if (isTop && isSelected({ zone: 'waste' })) {
+          el.classList.add('selected');
+        }
+        els.waste.appendChild(el);
+      }
     }
 
     // Foundations: show the top card of each suit pile
@@ -174,6 +421,14 @@
     els.moveCounter.textContent = String(gameState.moves);
     els.scoreCounter.textContent = String(gameState.score);
     els.btnUndo.disabled = gameState.history.length === 0;
+    els.btnDrawMode.textContent = 'Draw: ' + (gameState.drawMode === 3 ? '3' : '1');
+    els.btnAutoComplete.classList.toggle(
+      'hidden',
+      isAutoCompleting || !SolitaireEngine.canAutoComplete(gameState)
+    );
+    if (gameState.moves > 0) {
+      startTimerIfNeeded();
+    }
   }
 
   function hideWinOverlay() {
@@ -182,21 +437,50 @@
 
   function checkWinState() {
     if (SolitaireEngine.isGameWon(gameState)) {
+      stopTimer();
+      recordCurrentGameIfNeeded(true);
       els.winStats.textContent =
-        'You finished in ' + gameState.moves + ' moves with a score of ' + gameState.score + '.';
+        'You finished in ' + gameState.moves + ' moves with a score of ' +
+        gameState.score + ' in ' + SolitaireEngine.formatTime(elapsedSeconds) + '.';
       els.winOverlay.classList.remove('hidden');
     }
   }
 
   function handleNewGame() {
-    gameState = SolitaireEngine.createInitialState(true);
+    stopAutoComplete();
+    recordCurrentGameIfNeeded(false);
+    gameState = SolitaireEngine.createInitialState(true, undefined, loadDrawModePref());
     selectedSource = null;
     draggedSource = null;
+    gameResultRecorded = false;
     hideWinOverlay();
+    resetTimer();
+    render();
+  }
+
+  function handleNearWinDeal() {
+    stopAutoComplete();
+    recordCurrentGameIfNeeded(false);
+    gameState = SolitaireEngine.createNearWinState(loadDrawModePref());
+    selectedSource = null;
+    draggedSource = null;
+    gameResultRecorded = false;
+    hideWinOverlay();
+    resetTimer();
+    render();
+  }
+
+  function handleDrawModeToggle() {
+    const newMode = gameState.drawMode === 3 ? 1 : 3;
+    SolitaireEngine.setDrawMode(gameState, newMode);
+    saveDrawModePref(newMode);
     render();
   }
 
   function handleUndo() {
+    if (isAutoCompleting) {
+      stopAutoComplete();
+    }
     selectedSource = null;
     draggedSource = null;
     SolitaireEngine.undo(gameState);
@@ -298,9 +582,11 @@
   }
 
   function initGame() {
-    gameState = SolitaireEngine.createInitialState(true);
+    stats = loadStats();
+    gameState = SolitaireEngine.createInitialState(true, undefined, loadDrawModePref());
     selectedSource = null;
     draggedSource = null;
+    gameResultRecorded = false;
 
     els.stock.addEventListener('click', handleStockClick);
     els.tableau.forEach(function (colEl, col) {
@@ -323,6 +609,13 @@
     els.btnNewGame.addEventListener('click', handleNewGame);
     els.btnPlayAgain.addEventListener('click', handleNewGame);
     els.btnUndo.addEventListener('click', handleUndo);
+    els.btnDrawMode.addEventListener('click', handleDrawModeToggle);
+    els.btnHint.addEventListener('click', handleHint);
+    els.btnAutoComplete.addEventListener('click', handleAutoComplete);
+    els.btnNearWin.addEventListener('click', handleNearWinDeal);
+    els.btnStats.addEventListener('click', openStatsModal);
+    els.btnCloseStats.addEventListener('click', closeStatsModal);
+    els.btnResetStats.addEventListener('click', handleResetStats);
     document.addEventListener('keydown', function (event) {
       if ((event.ctrlKey || event.metaKey) && (event.key === 'z' || event.key === 'Z')) {
         event.preventDefault();

@@ -1,0 +1,66 @@
+PLAN REVIEW REQUEST (Stage 3) - Klondike Solitaire Feature Upgrade
+
+Review the plan below against your blueprint (plans/blueprint-raw.txt). It is your blueprint
+adopted with ONE deliberate deviation, flagged as [DEV-1]. Issue an explicit verdict:
+"APPROVED" or "REJECTED with required changes".
+
+[DEV-1] drawMode is NOT stored in the undo snapshot.
+Rationale: drawMode is a user preference (persisted in localStorage), not a move consequence.
+If it rode in snapshots, undoing after a mid-game toggle would silently revert the user's
+chosen mode. setDrawMode(state, mode) mutates state.drawMode directly and is never
+snapshotted; undo therefore never changes the mode. All other snapshot fields stay as-is.
+
+PLAN (3 segments, locked after approval):
+
+SEGMENT 1 - Engine & tests (engine.js, test_engine.js)
+- createInitialState(shouldShuffle, rngFn, drawMode): adds state.drawMode (default 1).
+- setDrawMode(state, mode) -> 1|3.
+- drawFromStock(state, countOverride?): count = countOverride ?? state.drawMode ?? 1;
+  draw pops min(count, stock.length) cards to waste face-up; recycle when stock empty and
+  waste non-empty (pop waste -> push stock face-down, same as today); moves += 1 once per
+  click; false when both empty. Default path unchanged => existing draw-1 tests untouched.
+- findHint(state) -> descriptor|null with priority (a) foundation (waste top first, then
+  tableau tops), (b) tableau move that flips a face-down card, (c) other tableau moves
+  (waste->tableau first, then stack moves, excluding King-at-index-0 to empty column),
+  (d) stock draw/recycle. Read-only.
+- canAutoComplete(state): !isGameWon && stock empty && waste empty && all tableau faceUp.
+- autoCompleteStep(state): lowest-rank legal foundation move among waste top + tableau tops;
+  executes via moveCards, returns {from,to,card} or null.
+- getAutoCompleteMoves(state): simulated full sequence on a clone; no live-state mutation.
+- createNearWinState(drawMode?): deterministic deal, foundations A..J all suits (44 cards),
+  tableau[0..3] hold alternating-color K,Q stacks face-up, tableau[4..6] empty, stock/waste
+  empty; canAutoComplete true immediately; 8 autoCompleteSteps win the game.
+- createDefaultStats(), recordGameResult(stats, won, elapsedSeconds), formatTime(seconds)
+  pure helpers as per blueprint.
+- Append >= 10 new tests to test_engine.js, zero existing tests removed/edited.
+- GATE: node test_engine.js exits 0 (18 old + >= 10 new).
+
+SEGMENT 2 - UI markup, styling, DOM bindings (index.html, styles.css, app.js)
+- index.html: timer stat span (#timer-display), buttons #btn-draw-mode, #btn-hint,
+  #btn-auto-complete (hidden by default), #btn-near-win, #btn-stats; #stats-modal overlay
+  with stat value spans, #btn-close-stats, #btn-reset-stats.
+- styles.css: draw-3 waste fan via --waste-fan-index, .hint-source/.hint-target pulse,
+  auto-complete accent, .modal-overlay/.modal-card/.stats-grid, hidden class reuse.
+- app.js: only extend the `els` map with the new DOM references (no logic yet).
+- GATE: node --check app.js and node test_engine.js exit 0; every new id in index.html
+  has a matching binding in app.js (cross-checked by script).
+
+SEGMENT 3 - Wiring, persistence, timer, animation, smoke check (app.js, smoke script)
+- Draw mode: load/save localStorage 'solitaire_draw_mode'; toggle applies to current game
+  immediately (setDrawMode) + persists; button label updates; new games read the pref.
+  Toggling does NOT redeal and does NOT record a loss.
+- Waste render: top 3 fanned (--waste-fan-index 0..2), only top card interactive.
+- Timer: starts on first move (moves 0 -> >0), stops on win, mm:ss via formatTime,
+  #timer-display; reset on new game / near-win deal.
+- Hint: findHint -> .hint-source/.hint-target classes, cleared after 1.5s or next action.
+- Auto-Complete: button visible when canAutoComplete && not already running; setTimeout
+  loop ~120ms per autoCompleteStep + render; cancels cleanly on new game/undo; ends in win.
+- Near-Win Deal button: loads createNearWinState(current pref mode), resets timer/flags.
+- Stats: localStorage 'solitaire_stats'; win recorded exactly once (gameResultRecorded
+  flag); abandoning an in-progress game (moves>0, not won) via New Game records a loss;
+  win overlay shows time; Stats modal renders all six values; reset button clears stats.
+- GATE: node --check app.js, node test_engine.js, and a Node smoke script
+  (plans/smoke_upgrade.js) proving: createNearWinState(3) -> canAutoComplete -> step loop
+  -> isGameWon -> recordGameResult math (played/won/pct/streaks/bestTime) -> all exit 0.
+
+Respond with your verdict. If APPROVED, confirm the segment table stands as written.

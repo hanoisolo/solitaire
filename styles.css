@@ -28,6 +28,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 12px 24px;
   border-bottom: 2px solid rgba(212, 175, 55, 0.5);
@@ -71,6 +72,21 @@ body {
 .actions button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+#btn-auto-complete {
+  border-color: #ffd700;
+  background: linear-gradient(180deg, #b8860b, #8a6508);
+  font-weight: bold;
+}
+
+#btn-auto-complete:hover {
+  background: linear-gradient(180deg, #daa520, #a87a0a);
+}
+
+/* Generic visibility helper (shared by win overlay, auto-complete button, stats modal) */
+.hidden {
+  display: none !important;
 }
 
 /* ---------- Board ---------- */
@@ -225,6 +241,39 @@ body {
   opacity: 0.75;
 }
 
+/* Draw-3 waste fan: up to three cards offset horizontally */
+
+#waste-pile .card {
+  transform:
+    translateY(calc(var(--card-index, 0) * var(--corner-offset)))
+    translateX(calc(var(--waste-fan-index, 0) * 22px));
+  transition: transform 0.15s ease-out;
+}
+
+/* Hint highlighting: pulsing outline on the source card and target slot */
+
+@keyframes hint-pulse {
+  0% {
+    box-shadow: 0 0 6px rgba(80, 220, 255, 0.7);
+    outline-color: rgba(80, 220, 255, 0.9);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(80, 220, 255, 1);
+    outline-color: rgba(160, 240, 255, 1);
+  }
+  100% {
+    box-shadow: 0 0 6px rgba(80, 220, 255, 0.7);
+    outline-color: rgba(80, 220, 255, 0.9);
+  }
+}
+
+.hint-source,
+.hint-target {
+  outline: 3px solid rgba(80, 220, 255, 0.9);
+  outline-offset: -1px;
+  animation: hint-pulse 0.9s ease-in-out infinite;
+}
+
 .drop-target {
   border-color: var(--gold) !important;
   box-shadow: 0 0 10px rgba(212, 175, 55, 0.6);
@@ -275,4 +324,68 @@ body {
   background: linear-gradient(180deg, #1d7a4c, #0d4a2c);
   color: var(--ivory);
   cursor: pointer;
+}
+
+/* ---------- Statistics modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 200;
+}
+
+.modal-card {
+  text-align: center;
+  padding: 32px 48px;
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+  background: linear-gradient(160deg, #0d4a2c, #072e1b);
+  box-shadow: 0 0 40px rgba(212, 175, 55, 0.5);
+}
+
+.modal-card h2 {
+  margin: 0 0 16px;
+  font-size: 1.8rem;
+  color: var(--gold);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 36px;
+  row-gap: 10px;
+  font-size: 1.1rem;
+  text-align: left;
+}
+
+.stats-grid .stats-label {
+  color: rgba(245, 240, 225, 0.75);
+}
+
+.stats-grid span {
+  align-self: center;
+}
+
+.modal-actions {
+  margin-top: 22px;
+}
+
+.modal-actions button {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 8px 20px;
+  margin: 0 6px;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #1d7a4c, #0d4a2c);
+  color: var(--ivory);
+  cursor: pointer;
+}
+
+.modal-actions button:hover {
+  background: linear-gradient(180deg, #269a60, #136040);
 }

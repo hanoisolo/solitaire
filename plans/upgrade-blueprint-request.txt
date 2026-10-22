@@ -1,0 +1,77 @@
+UPGRADE BLUEPRINT REQUEST - Klondike Solitaire Feature Upgrade Pass
+
+IMPORTANT OUTPUT RULE: You have NO tools available. Do not emit any function/tool calls,
+code-execution requests, or JSON tool invocations. Respond entirely in plain markdown text.
+
+You are gemini-architect. Design an upgrade blueprint for the existing Klondike Solitaire
+project at C:\Users\fboy2\VibeProjects\solitaire. Do NOT rewrite existing working features.
+All 18 existing tests in test_engine.js must keep passing (currently green under Node 24).
+
+EXISTING FILES:
+- engine.js: pure engine. Exports: SUITS, RANKS, getCardColor, createDeck, shuffleDeck,
+  createInitialState(shouldShuffle, rngFn), cloneStateSnapshot, pushSnapshot, undo,
+  drawFromStock (currently draws 1 card, recycles waste->stock face-down when stock empty),
+  canMoveToFoundation, canMoveToTableau, moveCards (already scores: waste->tableau +5,
+  any->foundation +10, foundation->tableau -15 floored at 0, tableau flip +5),
+  autoMoveToFoundation, isGameWon. State shape: { stock, waste, foundations{suit:[]},
+  tableau[7][], moves, score, history[] } with JSON snapshot undo (snapshot includes
+  stock/waste/foundations/tableau/moves/score).
+- app.js: DOM controller. Renders stock/waste/foundations/tableau, HUD (move-counter,
+  score-counter), buttons btn-undo/btn-new-game, win overlay with win-stats + btn-play-again.
+  Click-to-select-then-move, drag-and-drop, double-click auto-move to foundation, Ctrl+Z undo.
+- index.html: top bar with title, stats span, actions; board with stock/waste/spacer/4
+  foundation slots (data-suit, suit watermark text restored in render when empty);
+  tableau-0..6; win overlay; loads engine.js then app.js.
+- styles.css: felt/gold theme, .card, .selected, .drop-target, .win-overlay styles.
+- test_engine.js: 18 tests, run via "node test_engine.js", exit 0 required.
+
+NEW FEATURES TO ADD:
+1. Draw 1 / Draw 3 mode toggle, persisted as a preference (localStorage). Draw-3: stock click
+   moves up to 3 cards to waste (only top of waste playable - waste render shows top 3 fanned,
+   only top is interactive); recycle rule per mode (draw-1: full waste recycles; draw-3:
+   waste recycles but must preserve correct order semantics of standard Klondike draw-3).
+   Existing draw-1 tests must remain valid.
+2. Hint button: highlights ONE legal move. Priority: (a) any move to foundation, (b) tableau
+   move that flips a face-down card, (c) any other tableau move, (d) stock draw/recycle.
+   Returns move descriptors for UI highlighting.
+3. Auto-Complete: enabled once ALL tableau cards are face up; button visible then; animates
+   remaining cards to foundations one by one; ends in win state.
+4. Game timer + standard Klondike scoring (already mostly in engine; keep). Timer starts on
+   first move of a game, stops on win, display mm:ss.
+5. Statistics in localStorage: games played, games won, win %, current win streak, best win
+   streak, best time (seconds). Statistics modal panel with a button to open it.
+6. Foundation watermark already restored when empty (verify, no work expected).
+
+CONSTRAINTS:
+- Keep engine.js DOM-free (Node-testable). Browser-only concerns (localStorage, timer,
+  animation, highlighting) belong in app.js.
+- Undo must reverse score changes (already true via snapshots) AND must not corrupt the
+  draw-3 waste fanning.
+- Segments: 3 total, each touching at most 3 files.
+  - Segment 1 (engine & tests): draw modes (state.drawMode, drawing 3), hint selection,
+    auto-complete detection + move list, timer-agnostic stats helpers if any belong in
+    engine; append >= 10 new assertions to test_engine.js without removing existing ones.
+    Verification gate: "node test_engine.js" exits 0 with all old+new tests.
+  - Segment 2 (UI): index.html + styles.css + minimal app.js bindings for: draw-mode
+    toggle, Hint button, Auto-Complete button, timer display, Statistics button + modal,
+    hint highlight styling. Verification gate: files parse; visual/DOM ids consistent;
+    node test_engine.js still green (no engine change).
+  - Segment 3 (wiring): app.js full wiring of new controls to engine, localStorage
+    persistence (draw pref + stats), timer logic, hint highlight rendering, auto-complete
+    animation loop, "Load Near-Win Test Deal" option, stats update on win, end-to-end
+    smoke check via a Node-driven simulation of a near-win deal using engine only.
+    Verification gate: node test_engine.js green + a small node smoke script proving
+    auto-complete from the near-win deal finishes the game and stats math is correct.
+
+DELIVERABLE:
+1. Ordered segment plan, each with: exact files+functions to create/modify, concrete goal,
+   explicit Verification Gate.
+2. Exact new engine API signatures (names, args, return shapes) for: draw mode handling
+   (how drawFromStock changes), findHint(state) return shape, canAutoComplete(state),
+   autoCompleteStep(state) or equivalent, near-win test deal constructor signature
+   (deterministic, engine-level), stats record shape for localStorage.
+3. Key edge cases each segment must respect (draw-3 recycle order, undo of draw-3,
+   hint when no moves, auto-complete only when all face up).
+4. Risks to existing tests and how to avoid them.
+
+Respond with the full blueprint, then a segmentation table, then state "BLUEPRINT READY".

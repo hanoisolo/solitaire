@@ -1,0 +1,51 @@
+# Final Architectural Audit Report (Stage 6) — Klondike Solitaire Feature Upgrade
+
+## 1. Blueprint & Segmentation Conformance
+
+| Segment | Target Files | Blueprint Scope | Verification Gate Result | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Segment 1** | `engine.js`, `test_engine.js` | Pure engine implementation of Draw-1/Draw-3, `findHint`, `canAutoComplete`, `autoCompleteStep`, `getAutoCompleteMoves`, `createNearWinState`, and stats/timer helpers; unit test suite expansion. | `node test_engine.js` passed **33/33** tests (18 original untouched + 15 new upgrade tests, exit `0`). | **CONFORMANT** |
+| **Segment 2** | `index.html`, `styles.css`, `app.js` | HUD timer display, action bar buttons (`#btn-draw-mode`, `#btn-hint`, `#btn-auto-complete`, `#btn-near-win`, `#btn-stats`), `#stats-modal`, waste Draw-3 fan & hint/modal CSS, DOM element bindings in `els`. | `node --check app.js` exited `0`; all 37 DOM IDs verified against `app.js` bindings. | **CONFORMANT** |
+| **Segment 3** | `app.js`, `plans/smoke_upgrade.js` | Interactive controller wiring for Draw-3 waste fanning, `localStorage` persistence, `mm:ss` timer lifecycle, hint DOM highlights, Auto-Complete step loop, Near-Win loader, and end-to-end smoke gate. | `node --check app.js`, `node test_engine.js` (33/33), and `node plans/smoke_upgrade.js` (5/5) all exited `0`. | **CONFORMANT** |
+
+- **Strict Boundary Preservation**: `engine.js` remains 100% pure and DOM-free with dual CommonJS/browser global export compatibility. All DOM manipulation, timers, and `localStorage` I/O are isolated to `app.js`.
+- **No Unapproved Scope Creep**: Changes are strictly confined to the planned files and audit/smoke artifacts.
+
+---
+
+## 2. Technical Audit of Core Invariants & Edge Cases
+
+### 2.1 Draw-1 / Draw-3 Semantics, Recycle Order & Undo (`engine.js`, `app.js`)
+- **Backward Compatibility**: `createInitialState(shouldShuffle, rngFn, drawMode)` defaults `state.drawMode` to `1` when omitted, keeping all 18 original unit tests passing without modification.
+- **Draw & Partial Remainder**: `drawFromStock(state, countOverride)` pushes an undo snapshot and pops `Math.min(count, state.stock.length)` cards to `state.waste` face-up in a single move (`state.moves += 1`), handling `< 3` remaining stock cards without prematurely recycling.
+- **Recycle Order Preservation**: When `state.stock` is empty and `state.waste` is non-empty, `drawFromStock` snapshots state and pops all cards from `state.waste` back onto `state.stock` face-down, reversing the waste array so the earliest-drawn cards return to the top of the stock for the next pass.
+- **Sticky Draw Mode Across Undo (`DEV-1`)**: `serializeForSnapshot` and `undo` intentionally exclude `drawMode` so a mid-game draw-mode toggle is preserved as a user preference rather than reverted by `undo(state)` (verified by unit test `undo does not revert a mid-game draw mode toggle`).
+- **Waste Fan Interactivity**: In `app.js`, `render()` slices up to `fanCount` (`3` in Draw-3, `1` in Draw-1) cards, assigns `--waste-fan-index` (`0..2`), and passes `interactive = isTop` to `createCardElement`, guaranteeing that only the topmost waste card receives click, double-click, and drag listeners.
+
+### 2.2 Hint Engine Priority & Infinite-Loop Prevention (`engine.js`, `app.js`)
+- **Read-Only Guarantee**: `findHint(state)` performs zero state mutations.
+- **Priority Hierarchy**:
+  1. **Foundation (`'foundation'`)**: Checks `state.waste` top card first, then `state.tableau[0..6]` top cards.
+  2. **Face-Down Flip (`'tableau-flip'`)**: Checks tableau moves starting at `firstFaceUpIndex(from) > 0` that expose a face-down card.
+  3. **Productive Tableau (`'tableau'`)**: Checks waste-to-tableau moves, full face-up stack moves (`idx === 0`) while explicitly skipping King-at-index-0 moves onto empty columns (`state.tableau[toCol].length === 0 && moving[0].rank === 13`), and sub-stack splits (`cardIndex > idx`) only when `from[cardIndex - 1]` is immediately playable to its foundation.
+  4. **Stock Draw / Recycle (`'stock'`)**: Falls back to drawing from `stock` or recycling `waste`, or returns `null` when won or no moves remain.
+- **DOM Highlighting Lifecycle**: `handleHint()` applies `.hint-source` and `.hint-target` and clears them automatically after `1500ms` or immediately at the start of the next `render()`.
+
+### 2.3 Auto-Complete Gating, Execution & Cancellation Safety (`engine.js`, `app.js`)
+- **Gating**: `canAutoComplete(state)` returns `true` iff `!isGameWon(state)`, `state.stock.length === 0`, `state.waste.length === 0`, and every card in `state.tableau[0..6]` is face-up.
+- **Step Execution & Simulation**: `autoCompleteStep(state)` selects the lowest-rank eligible card across waste top and tableau tops and delegates to `moveCards(state, best.from, best.to)`, ensuring undo snapshots, move counts, and `+10` foundation scoring apply at each step. `getAutoCompleteMoves(state)` clones state via `cloneStateSnapshot(state)` without mutating live state.
+- **Near-Win Deal**: `createNearWinState(drawMode)` deterministically constructs a valid 52-card state (44 cards `A..J` in foundations with `score: 440`, 8 cards `K/Q` on `tableau[0..3]`) that completes in 8 steps to a final score of `520`.
+- **Cancellation Safety**: `stopAutoComplete()` clears `autoCompleteTimer`, resets `isAutoCompleting = false`, and re-enables `#btn-auto-complete`, and is called before `handleNewGame()`, `handleNearWinDeal()`, and `handleUndo()`.
+
+### 2.4 Statistics & Timer Lifecycle (`engine.js`, `app.js`)
+- **Single-Record Guard**: `recordCurrentGameIfNeeded(won)` is guarded by `gameResultRecorded`, ignores unstarted games (`gameState.moves === 0 && !won`), and prevents a completed game from ever being recorded as a loss (`!won && SolitaireEngine.isGameWon(gameState)`).
+- **Resilient Persistence**: `loadDrawModePref`, `saveDrawModePref`, `loadStats`, and `saveStats` wrap all `localStorage` calls in `try/catch` blocks, and `loadStats()` merges stored numeric properties onto `createDefaultStats()`.
+- **Timer Accuracy**: Timer starts on the first move (`gameState.moves > 0`), halts immediately in `checkWinState()`, formats via `SolitaireEngine.formatTime(elapsedSeconds)`, and resets cleanly on new or near-win deals.
+
+---
+
+## 3. Final Verdict
+
+All three segments, verification gates, unit tests (33/33), smoke checks (5/5), and architectural invariants are verified and complete.
+
+AUDIT PASSED

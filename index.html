@@ -12,8 +12,14 @@
     <div class="stats">
       <span class="stat">Moves: <span id="move-counter">0</span></span>
       <span class="stat">Score: <span id="score-counter">0</span></span>
+      <span class="stat">Time: <span id="timer-display">00:00</span></span>
     </div>
     <div class="actions">
+      <button id="btn-draw-mode" type="button" title="Toggle Draw 1 / Draw 3">Draw: 1</button>
+      <button id="btn-hint" type="button">Hint</button>
+      <button id="btn-auto-complete" type="button" class="hidden">Auto-Complete</button>
+      <button id="btn-near-win" type="button" title="Load a deterministic near-win deal to test Auto-Complete">Near-Win Deal</button>
+      <button id="btn-stats" type="button">Stats</button>
       <button id="btn-undo" type="button" disabled>Undo</button>
       <button id="btn-new-game" type="button">New Game</button>
     </div>
@@ -46,6 +52,24 @@
       <h2>You Win!</h2>
       <p id="win-stats"></p>
       <button id="btn-play-again" type="button">Play Again</button>
+    </div>
+  </div>
+
+  <div id="stats-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2>Statistics</h2>
+      <div class="stats-grid">
+        <span class="stats-label">Games Played</span><span id="stat-games-played">0</span>
+        <span class="stats-label">Games Won</span><span id="stat-games-won">0</span>
+        <span class="stats-label">Win Percentage</span><span id="stat-win-pct">0%</span>
+        <span class="stats-label">Current Streak</span><span id="stat-current-streak">0</span>
+        <span class="stats-label">Best Streak</span><span id="stat-best-streak">0</span>
+        <span class="stats-label">Best Time</span><span id="stat-best-time">--:--</span>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-reset-stats" type="button">Reset Stats</button>
+        <button id="btn-close-stats" type="button">Close</button>
+      </div>
     </div>
   </div>
 

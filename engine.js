@@ -44,7 +44,7 @@
     return copy;
   }
 
-  function createInitialState(shouldShuffle, rngFn) {
+  function createInitialState(shouldShuffle, rngFn, drawMode) {
     const deck =
       shouldShuffle === false ? createDeck() : shuffleDeck(createDeck(), rngFn);
     const state = {
@@ -54,7 +54,8 @@
       tableau: [[], [], [], [], [], [], []],
       moves: 0,
       score: 0,
-      history: []
+      history: [],
+      drawMode: drawMode === 3 ? 3 : 1
     };
     let idx = 0;
     for (let col = 0; col < 7; col++) {
@@ -103,12 +104,22 @@
     return true;
   }
 
-  function drawFromStock(state) {
+  function setDrawMode(state, mode) {
+    state.drawMode = mode === 3 ? 3 : 1;
+    return state.drawMode;
+  }
+
+  function drawFromStock(state, countOverride) {
+    const count =
+      countOverride !== undefined ? countOverride : state.drawMode || 1;
     if (state.stock.length > 0) {
       pushSnapshot(state);
-      const card = state.stock.pop();
-      card.faceUp = true;
-      state.waste.push(card);
+      const n = Math.min(count, state.stock.length);
+      for (let i = 0; i < n; i++) {
+        const card = state.stock.pop();
+        card.faceUp = true;
+        state.waste.push(card);
+      }
       state.moves += 1;
       return true;
     }
@@ -261,6 +272,299 @@
     return true;
   }
 
+  /* ---------- Hint selection (read-only) ---------- */
+
+  function firstFaceUpIndex(col) {
+    for (let i = 0; i < col.length; i++) {
+      if (col[i].faceUp) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function findHint(state) {
+    if (isGameWon(state)) {
+      return null;
+    }
+    // (a) any move to foundation: waste top first, then tableau tops
+    if (state.waste.length > 0) {
+      const top = state.waste[state.waste.length - 1];
+      if (canMoveToFoundation(top, state.foundations[top.suit], top.suit)) {
+        return {
+          type: 'foundation',
+          from: { zone: 'waste' },
+          to: { zone: 'foundation', suit: top.suit },
+          card: top
+        };
+      }
+    }
+    for (let col = 0; col < 7; col++) {
+      const pile = state.tableau[col];
+      if (pile.length === 0) {
+        continue;
+      }
+      const top = pile[pile.length - 1];
+      if (canMoveToFoundation(top, state.foundations[top.suit], top.suit)) {
+        return {
+          type: 'foundation',
+          from: { zone: 'tableau', col: col, cardIndex: pile.length - 1 },
+          to: { zone: 'foundation', suit: top.suit },
+          card: top
+        };
+      }
+    }
+    // (b) tableau move that flips a face-down card
+    for (let fromCol = 0; fromCol < 7; fromCol++) {
+      const from = state.tableau[fromCol];
+      const idx = firstFaceUpIndex(from);
+      if (idx <= 0) {
+        continue; // nothing face-down would be flipped
+      }
+      const moving = from.slice(idx);
+      for (let toCol = 0; toCol < 7; toCol++) {
+        if (toCol === fromCol) {
+          continue;
+        }
+        if (canMoveToTableau(moving, state.tableau[toCol])) {
+          return {
+            type: 'tableau-flip',
+            from: { zone: 'tableau', col: fromCol, cardIndex: idx },
+            to: { zone: 'tableau', col: toCol },
+            card: moving[0]
+          };
+        }
+      }
+    }
+    // (c) other productive tableau moves
+    // (c1) waste top onto a tableau column
+    if (state.waste.length > 0) {
+      const top = state.waste[state.waste.length - 1];
+      for (let toCol = 0; toCol < 7; toCol++) {
+        if (canMoveToTableau([top], state.tableau[toCol])) {
+          return {
+            type: 'tableau',
+            from: { zone: 'waste' },
+            to: { zone: 'tableau', col: toCol },
+            card: top
+          };
+        }
+      }
+    }
+    for (let fromCol = 0; fromCol < 7; fromCol++) {
+      const from = state.tableau[fromCol];
+      const idx = firstFaceUpIndex(from);
+      if (idx < 0) {
+        continue;
+      }
+      // (c2) full face-up column move, except a King at index 0 to an empty column
+      if (idx === 0) {
+        const moving = from.slice(0);
+        for (let toCol = 0; toCol < 7; toCol++) {
+          if (toCol === fromCol) {
+            continue;
+          }
+          if (state.tableau[toCol].length === 0 && moving[0].rank === 13) {
+            continue; // pointless King shuffle between empty columns
+          }
+          if (canMoveToTableau(moving, state.tableau[toCol])) {
+            return {
+              type: 'tableau',
+              from: { zone: 'tableau', col: fromCol, cardIndex: 0 },
+              to: { zone: 'tableau', col: toCol },
+              card: moving[0]
+            };
+          }
+        }
+      }
+      // (c3) sub-stack split, only when it exposes a foundation-ready card
+      for (let cardIndex = idx + 1; cardIndex < from.length; cardIndex++) {
+        const exposed = from[cardIndex - 1];
+        if (!canMoveToFoundation(exposed, state.foundations[exposed.suit], exposed.suit)) {
+          continue;
+        }
+        const moving = from.slice(cardIndex);
+        for (let toCol = 0; toCol < 7; toCol++) {
+          if (toCol === fromCol) {
+            continue;
+          }
+          if (canMoveToTableau(moving, state.tableau[toCol])) {
+            return {
+              type: 'tableau',
+              from: { zone: 'tableau', col: fromCol, cardIndex: cardIndex },
+              to: { zone: 'tableau', col: toCol },
+              card: moving[0]
+            };
+          }
+        }
+      }
+    }
+    // (d) stock draw or recycle
+    if (state.stock.length > 0) {
+      return {
+        type: 'stock',
+        from: { zone: 'stock' },
+        to: { zone: 'waste' },
+        card: state.stock[state.stock.length - 1]
+      };
+    }
+    if (state.waste.length > 0) {
+      return { type: 'stock', from: { zone: 'stock' }, to: { zone: 'stock' }, card: null };
+    }
+    return null;
+  }
+
+  /* ---------- Auto-complete ---------- */
+
+  function canAutoComplete(state) {
+    if (isGameWon(state)) {
+      return false;
+    }
+    if (state.stock.length > 0 || state.waste.length > 0) {
+      return false;
+    }
+    for (let col = 0; col < 7; col++) {
+      const pile = state.tableau[col];
+      for (let i = 0; i < pile.length; i++) {
+        if (!pile[i].faceUp) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function autoCompleteStep(state) {
+    let best = null;
+    if (state.waste.length > 0) {
+      const top = state.waste[state.waste.length - 1];
+      if (canMoveToFoundation(top, state.foundations[top.suit], top.suit)) {
+        best = { rank: top.rank, card: top, from: { zone: 'waste' }, to: { zone: 'foundation', suit: top.suit } };
+      }
+    }
+    for (let col = 0; col < 7; col++) {
+      const pile = state.tableau[col];
+      if (pile.length === 0) {
+        continue;
+      }
+      const top = pile[pile.length - 1];
+      if (!canMoveToFoundation(top, state.foundations[top.suit], top.suit)) {
+        continue;
+      }
+      if (best === null || top.rank < best.rank) {
+        best = {
+          rank: top.rank,
+          card: top,
+          from: { zone: 'tableau', col: col, cardIndex: pile.length - 1 },
+          to: { zone: 'foundation', suit: top.suit }
+        };
+      }
+    }
+    if (best === null) {
+      return null;
+    }
+    const moved = moveCards(state, best.from, best.to);
+    if (!moved) {
+      return null;
+    }
+    return { from: best.from, to: best.to, card: best.card };
+  }
+
+  function getAutoCompleteMoves(state) {
+    const sim = cloneStateSnapshot(state);
+    sim.history = [];
+    sim.drawMode = state.drawMode || 1;
+    const moves = [];
+    for (let i = 0; i < 52; i++) {
+      const step = autoCompleteStep(sim);
+      if (!step) {
+        break;
+      }
+      moves.push(step);
+    }
+    return moves;
+  }
+
+  /* ---------- Deterministic near-win test deal ---------- */
+
+  function createNearWinState(drawMode) {
+    const state = {
+      stock: [],
+      waste: [],
+      foundations: { spades: [], hearts: [], diamonds: [], clubs: [] },
+      tableau: [[], [], [], [], [], [], []],
+      moves: 0,
+      score: 440,
+      history: [],
+      drawMode: drawMode === 3 ? 3 : 1
+    };
+    // Foundations hold ranks 1..11 (A..J) of every suit
+    for (let s = 0; s < SUITS.length; s++) {
+      for (let r = 1; r <= 11; r++) {
+        state.foundations[SUITS[s]].push(createCard(SUITS[s], r));
+        state.foundations[SUITS[s]][r - 1].faceUp = true;
+      }
+    }
+    // Remaining 8 cards: the four Kings and Queens in alternating-color stacks
+    const stacks = [
+      ['spades', 'hearts'],
+      ['hearts', 'clubs'],
+      ['diamonds', 'spades'],
+      ['clubs', 'diamonds']
+    ];
+    for (let col = 0; col < stacks.length; col++) {
+      const king = createCard(stacks[col][0], 13);
+      const queen = createCard(stacks[col][1], 12);
+      king.faceUp = true;
+      queen.faceUp = true;
+      state.tableau[col].push(king, queen);
+    }
+    return state;
+  }
+
+  /* ---------- Statistics helpers (pure) ---------- */
+
+  function createDefaultStats() {
+    return {
+      gamesPlayed: 0,
+      gamesWon: 0,
+      winPercentage: 0,
+      currentStreak: 0,
+      bestStreak: 0,
+      bestTime: null
+    };
+  }
+
+  function recordGameResult(stats, won, elapsedSeconds) {
+    const updated = {
+      gamesPlayed: stats.gamesPlayed + 1,
+      gamesWon: stats.gamesWon + (won ? 1 : 0),
+      winPercentage: 0,
+      currentStreak: won ? (stats.currentStreak || 0) + 1 : 0,
+      bestStreak: stats.bestStreak || 0,
+      bestTime: stats.bestTime === undefined ? null : stats.bestTime
+    };
+    updated.winPercentage = Math.round((updated.gamesWon / updated.gamesPlayed) * 100);
+    if (updated.currentStreak > updated.bestStreak) {
+      updated.bestStreak = updated.currentStreak;
+    }
+    if (won && typeof elapsedSeconds === 'number' && elapsedSeconds >= 0) {
+      if (updated.bestTime === null || elapsedSeconds < updated.bestTime) {
+        updated.bestTime = elapsedSeconds;
+      }
+    }
+    return updated;
+  }
+
+  function formatTime(totalSeconds) {
+    const s = Math.max(0, Math.floor(totalSeconds || 0));
+    const mm = Math.floor(s / 60);
+    const ss = s % 60;
+    return (
+      String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0')
+    );
+  }
+
   const SolitaireEngine = {
     SUITS: SUITS,
     RANKS: RANKS,
@@ -271,12 +575,21 @@
     cloneStateSnapshot: cloneStateSnapshot,
     pushSnapshot: pushSnapshot,
     undo: undo,
+    setDrawMode: setDrawMode,
     drawFromStock: drawFromStock,
     canMoveToFoundation: canMoveToFoundation,
     canMoveToTableau: canMoveToTableau,
     moveCards: moveCards,
     autoMoveToFoundation: autoMoveToFoundation,
-    isGameWon: isGameWon
+    isGameWon: isGameWon,
+    findHint: findHint,
+    canAutoComplete: canAutoComplete,
+    autoCompleteStep: autoCompleteStep,
+    getAutoCompleteMoves: getAutoCompleteMoves,
+    createNearWinState: createNearWinState,
+    createDefaultStats: createDefaultStats,
+    recordGameResult: recordGameResult,
+    formatTime: formatTime
   };
 
   if (typeof module !== 'undefined' && module.exports) {

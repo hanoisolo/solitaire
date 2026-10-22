@@ -1,0 +1,125 @@
+FINAL ARCHITECTURAL AUDIT REQUEST (Stage 6) - Klondike Solitaire Feature Upgrade
+
+IMPORTANT OUTPUT RULE: You have NO tools available. Do not emit any function/tool calls.
+Respond entirely in plain markdown text. End with "AUDIT PASSED" or "AUDIT FAILED: <reasons>".
+
+All three segments of the APPROVED upgrade plan are implemented and all verification gates
+are green. Audit the final result against your blueprint (attached) and issue your verdict.
+
+=== FINAL TEST OUTPUT (verbatim) ===
+$ node test_engine.js
+ok - createDeck returns 52 unique valid cards
+ok - shuffleDeck is deterministic with a fixed rng and loses no cards
+ok - random shuffle produces a different order but preserves all cards
+ok - createInitialState deals 7 tableau columns and a 24-card stock
+ok - canMoveToTableau enforces alternating colors and descending rank
+ok - moveCards executes legal single-card and multi-card tableau moves
+ok - moveCards rejects illegal moves without touching state or history
+ok - moving a card off a column flips the newly exposed card face-up (+5 score)
+ok - drawFromStock draws to waste and recycles when stock is empty
+ok - drawFromStock returns false when stock and waste are both empty
+ok - canMoveToFoundation enforces suit and ascending rank from Ace
+ok - moveCards to foundation scores +10 and rejects multi-card stacks
+ok - autoMoveToFoundation sends waste and tableau tops to their suit pile
+ok - undo restores the exact prior state including moves and score
+ok - undo restores tableau piles and a recycle cycle
+ok - isGameWon is true only when all four foundations hold 13 cards
+ok - multi-step sequence: undo restores exact prior moves, score, and piles
+ok - simulated full 52-card foundation completion triggers isGameWon
+All 18 engine tests passed.   <-- all 18 ORIGINAL tests untouched and green
+ok - createInitialState defaults to draw 1 and accepts drawMode 3
+ok - drawFromStock in draw-3 mode moves 3 cards to waste in draw order
+ok - draw-3 draws only the remaining cards when stock has fewer than 3
+ok - draw-3 recycle restores the original pass order
+ok - undo restores stock and waste exactly after a draw-3 draw
+ok - undo does not revert a mid-game draw mode toggle
+ok - findHint prefers foundation moves over tableau and stock
+ok - findHint prefers tableau moves that flip a face-down card
+ok - findHint falls back to plain tableau moves and skips pointless King moves
+ok - findHint falls back to stock draw and recycle
+ok - canAutoComplete requires an unwon game, empty stock/waste, all face-up
+ok - autoCompleteStep moves the lowest-rank eligible card to its foundation
+ok - createNearWinState auto-completes to a win in 8 steps with correct scoring
+ok - recordGameResult tracks played, won, pct, streaks, and best time
+ok - formatTime formats seconds as mm:ss with zero padding
+All 33 engine tests passed (including upgrade tests).  (exit 0)
+
+$ node --check app.js  (exit 0)
+$ node plans/smoke_upgrade.js  (exit 0)
+smoke ok - near-win deal with draw mode 3 is immediately auto-completable
+smoke ok - auto-complete step loop finishes the game in 8 ticks with win scoring
+smoke ok - undo reverses the last auto-complete step including its score
+smoke ok - draw-3 draw/hint/recycle path is consistent mid-game
+smoke ok - stats record win once, then an abandoned game as a loss
+smoke: all 5 checks passed.
+
+DOM contract check: 37 ids in index.html, all non-board ids bound in app.js (exit 0).
+=== END TEST OUTPUT ===
+
+=== UPGRADE DIFF SUMMARY (5 files, +1068/-18 lines) ===
+
+engine.js (Segment 1):
+- createInitialState(shouldShuffle, rngFn, drawMode): adds state.drawMode (1|3, default 1).
+- setDrawMode(state, mode): sticky preference setter, normalizes invalid to 1.
+- drawFromStock(state, countOverride?): count = countOverride ?? state.drawMode ?? 1.
+  Draw phase pops min(count, stock.length) cards to waste face-up; recycle phase unchanged
+  (pop waste -> push stock face-down); one move per click; false when both empty.
+  Default path identical to before => all 18 original tests green.
+- [DEV-1 as approved] drawMode is NOT in the undo snapshot; undo never reverts a toggle.
+- findHint(state): read-only; priority (a) foundation (waste top, then tableau tops),
+  (b) tableau move flipping a face-down card, (c) waste->tableau, full-stack moves
+  excluding King-at-index-0 to empty column, sub-stack splits only when they expose a
+  foundation-ready card, (d) stock draw / recycle; null when game won or stuck.
+- canAutoComplete(state): !won && stock empty && waste empty && all tableau face-up.
+- autoCompleteStep(state): lowest-rank eligible among waste top + tableau tops; executes
+  via moveCards (so snapshots/scoring/undo all apply); returns {from,to,card} or null.
+- getAutoCompleteMoves(state): simulated preview on a clone, live state untouched.
+- createNearWinState(drawMode?): deterministic; foundations A..J all suits, tableau[0..3]
+  alternating-color K/Q stacks, stock/waste empty; auto-completes to a win in 8 steps.
+- createDefaultStats() / recordGameResult(stats, won, elapsedSeconds) / formatTime(seconds):
+  pure stats math (played, won, rounded pct, streak reset on loss, bestTime min on wins).
+
+test_engine.js (Segment 1): 15 new tests appended, zero original tests modified or removed.
+
+index.html (Segment 2): Time stat span (#timer-display); action buttons #btn-draw-mode,
+#btn-hint, #btn-auto-complete (hidden), #btn-near-win, #btn-stats; #stats-modal with the
+six stat spans, #btn-reset-stats, #btn-close-stats.
+
+styles.css (Segment 2): generic .hidden; draw-3 waste fan (#waste-pile .card translateX via
+--waste-fan-index); .hint-source/.hint-target pulsing cyan outline; #btn-auto-complete gold
+accent; .modal-overlay/.modal-card/.stats-grid; top-bar flex-wrap.
+
+app.js (Segments 2+3):
+- els extended with all new DOM refs (Segment 2, verified by ID cross-check).
+- localStorage: 'solitaire_draw_mode' and 'solitaire_stats' with try/catch fallbacks;
+  loadStats merges stored records over defaults so older records never break.
+- Draw mode toggle: applies to the CURRENT game immediately (setDrawMode + persist +
+  button label); no redeal, no loss recording on toggle; new games load the pref.
+- Waste render: draw-3 fans top 3 (--waste-fan-index 0..2); only the top card is
+  interactive (createCardElement interactive flag); draw-1 still shows a single card.
+- Timer: starts on first move (updateHUD: moves > 0), stops on win, resets on new game /
+  near-win deal; mm:ss display via engine formatTime.
+- Hint: findHint -> .hint-source/.hint-target classes, auto-cleared after 1.5s and on the
+  next render (any interaction).
+- Auto-Complete: button visibility driven by canAutoComplete && !isAutoCompleting; 120ms
+  setTimeout step loop calling autoCompleteStep + render until won; stopAutoComplete()
+  cancels cleanly and is called from new game, near-win, and undo paths.
+- Near-Win Deal button: loads createNearWinState(pref), resets timer and flags.
+- Stats: recorded exactly once per game (gameResultRecorded flag); win recorded in
+  checkWinState with elapsedSeconds; abandoning an in-progress game (moves > 0, not won)
+  via New Game / Near-Win records a loss; a won game can never be recorded as a loss;
+  win overlay now includes elapsed time; Stats modal + Reset Stats wired.
+- Foundation watermark: render() sets pile textContent to the suit symbol when a pile
+  empties (pre-existing fix verified, unchanged).
+
+plans/: blueprint + review + audit trail files; plans/smoke_upgrade.js is the Segment 3
+end-to-end gate script.
+
+=== NON-REGRESSION ===
+- All 18 original tests pass unmodified; 33/33 total; smoke 5/5; node --check clean.
+- Existing interactions unchanged: click-to-move, drag-and-drop, double-click to
+  foundation, Ctrl+Z undo, win overlay, suit watermark.
+
+Audit against the blueprint: confirm architecture conformance, correctness of the
+draw-3 recycle/undo semantics, hint priority, auto-complete gating and cancellation,
+stats double-counting prevention, and non-regression. Issue your verdict.
